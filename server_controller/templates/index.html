@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Robot Control</title>
+    <style>
+        /* --- Reset and Basic Body Styles --- */
+        html, body {
+            height: 100%; /* Ensure body can take full height if needed */
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center; /* Center content vertically */
+            background-color: #e0e8f0;
+            -webkit-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            /* Add some padding, especially useful on mobile */
+            padding: 10px; /* General padding for small screens */
+            box-sizing: border-box; /* Include padding in height/width calculations */
+        }
+
+        /* --- Heading --- */
+        h1 {
+            color: #4682b4;
+            margin-bottom: 20px; /* Default margin */
+            text-align: center;
+            font-size: 2em; /* Default size */
+        }
+
+        /* --- Controls Container --- */
+        .controls-container {
+            display: grid;
+            grid-template-areas:
+                ". forward ."
+                "left stop right"
+                ". backward .";
+            gap: 15px; /* Default gap */
+            margin-bottom: 15px; /* Default margin */
+        }
+
+        /* --- Control Buttons --- */
+        .control-button {
+            width: 100px; /* Default size */
+            height: 100px;
+            font-size: 1.3em;
+            line-height: 1.2;
+            border: 2px solid #555;
+            border-radius: 15px;
+            background-color: #f8f8f8;
+            color: #333;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            text-align: center;
+            box-shadow: 3px 3px 6px rgba(0,0,0,0.2);
+            transition: background-color 0.1s, transform 0.1s;
+            touch-action: manipulation;
+        }
+        .control-button.active {
+            background-color: #b0c4de;
+            color: white;
+            transform: scale(0.95);
+            box-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+        }
+        .control-button:hover:not(.active) {
+             background-color: #ffffff;
+        }
+        #forward-button { grid-area: forward; }
+        #left-button { grid-area: left; }
+        #stop-button {
+            grid-area: stop;
+            background-color: #ff7f7f;
+            color: white;
+            font-weight: bold;
+            border-color: #cc6666;
+         }
+        #stop-button:active {
+             background-color: #ff4c4c; transform: scale(0.95); box-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+         }
+        #right-button { grid-area: right; }
+        #backward-button { grid-area: backward; }
+
+        /* --- Status Message --- */
+        #status-message {
+            margin-top: 10px; /* Default margin */
+            padding: 8px 12px;
+            border-radius: 8px;
+            min-height: 1.5em;
+            text-align: center;
+            width: 90%;
+            max-width: 450px;
+            font-size: 0.9em;
+            box-shadow: inset 1px 1px 3px rgba(0,0,0,0.1);
+        }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+
+
+        /* --- Responsive Styles for PORTRAIT on Smaller Screens --- */
+        @media (max-width: 600px) and (orientation: portrait) {
+            body { padding-top: 15px; }
+            h1 {
+                font-size: 1.6em;
+                margin-bottom: 15px;
+            }
+            .controls-container {
+                gap: 10px;
+                margin-bottom: 10px;
+            }
+            .control-button {
+                width: 75px;
+                height: 75px;
+                font-size: 1.0em;
+                border-radius: 10px;
+                box-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+            }
+            .control-button.active {
+                 transform: scale(0.94); box-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+             }
+            #status-message {
+                 font-size: 0.8em;
+                 margin-top: 8px;
+             }
+        }
+
+        /* --- Responsive Styles for LANDSCAPE on Smaller Screens (e.g., Phones) --- */
+        /* Targets devices where height is limited, common in landscape */
+        @media (max-height: 450px) and (orientation: landscape) {
+            body {
+                justify-content: flex-start; /* Align content to top to give controls more space */
+                padding-top: 5px; /* Reduce top padding */
+                padding-bottom: 5px;
+            }
+            h1 {
+                font-size: 1.2em; /* Much smaller heading */
+                margin-bottom: 5px; /* Reduce space below heading */
+            }
+            .controls-container {
+                gap: 8px; /* Smaller gap between buttons */
+                margin-bottom: 5px;
+                /* Optional: could try to make controls wider if too cramped vertically */
+                /* grid-template-columns: repeat(3, 1fr); */
+            }
+            .control-button {
+                width: 60px; /* Smaller buttons */
+                height: 60px; /* Significantly reduce height */
+                font-size: 0.8em; /* Smaller font */
+                border-radius: 8px;
+                box-shadow: 1px 1px 3px rgba(0,0,0,0.2);
+                /* Ensure text still fits or adjust line-height/padding */
+                line-height: 1.1;
+            }
+            .control-button.active {
+                 transform: scale(0.93); box-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+             }
+            #status-message {
+                font-size: 0.7em; /* Smaller status text */
+                padding: 5px 8px;
+                margin-top: 5px; /* Reduce space above status */
+                min-height: 1.2em;
+            }
+        }
+
+         /* Optional: Even smaller adjustments for very narrow portrait screens */
+         @media (max-width: 360px) and (orientation: portrait) {
+             .control-button {
+                 width: 65px;
+                 height: 65px;
+                 font-size: 0.9em;
+             }
+              .controls-container {
+                 gap: 8px;
+             }
+         }
+
+    </style>
+</head>
+<body>
+    <h1>Robot Controller</h1>
+
+    <div class="controls-container">
+        <button id="forward-button" class="control-button movement-button" data-command="F">↑<br>Forward</button>
+        <button id="left-button" class="control-button movement-button" data-command="L">←<br>Left</button>
+        <button id="stop-button" class="control-button" data-command="S">STOP</button>
+        <button id="right-button" class="control-button movement-button" data-command="R">→<br>Right</button>
+        <button id="backward-button" class="control-button movement-button" data-command="B">↓<br>Back</button>
+    </div>
+
+    <div id="status-message"></div>
+
+    <script>
+        // ... (JavaScript remains the same as your last version with continuous sending) ...
+        const statusMessageDiv = document.getElementById('status-message');
+        const movementButtons = document.querySelectorAll('.movement-button'); // F, L, R, B
+        const stopButton = document.getElementById('stop-button');
+
+        let commandInterval = null; // Stores the ID of the interval timer
+        const COMMAND_INTERVAL_MS = 100; // Send command every 100ms when held
+
+        // --- Send command to server ---
+        async function sendCommandToServer(command) {
+            if (!commandInterval && command !== 'S') {
+                statusMessageDiv.textContent = 'Sending...';
+                statusMessageDiv.className = '';
+            }
+             console.log(`Attempting to send: ${command}`);
+
+            try {
+                const response = await fetch('/send_command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: command }),
+                });
+                const result = await response.json();
+
+                if (!response.ok) {
+                    console.error('Error from server:', result);
+                    statusMessageDiv.textContent = result.message || `Failed to send command '${command}'.`;
+                    statusMessageDiv.classList.add('error');
+                    stopSending();
+                } else if (!commandInterval && command !== 'S') {
+                    statusMessageDiv.textContent = result.message || `Command '${command}' sent successfully!`;
+                    statusMessageDiv.classList.add('success');
+                } else if (command === 'S') {
+                     statusMessageDiv.textContent = result.message || `Command '${command}' sent successfully!`;
+                     statusMessageDiv.classList.add('success');
+                }
+            } catch (error) {
+                console.error('Network error or server down:', error);
+                statusMessageDiv.textContent = 'Network error. Is the Python server running?';
+                statusMessageDiv.classList.add('error');
+                stopSending();
+            }
+        }
+
+        // --- Stop sending commands (clear interval, send Stop) ---
+        function stopSending() {
+            if (commandInterval) {
+                clearInterval(commandInterval);
+                commandInterval = null;
+                console.log("Interval cleared, sending STOP");
+                sendCommandToServer('S');
+            }
+            clearActiveStyles();
+        }
+
+        // --- Clear active styles ---
+        function clearActiveStyles() {
+            movementButtons.forEach(btn => btn.classList.remove('active'));
+        }
+
+        // --- Event Listeners for Movement Buttons ---
+        movementButtons.forEach(button => {
+            const command = button.getAttribute('data-command');
+            const handlePress = (event) => {
+                event.preventDefault();
+                if (commandInterval) return;
+                clearActiveStyles();
+                button.classList.add('active');
+                sendCommandToServer(command);
+                commandInterval = setInterval(() => { sendCommandToServer(command); }, COMMAND_INTERVAL_MS);
+            };
+            button.addEventListener('mousedown', handlePress);
+            button.addEventListener('touchstart', handlePress, { passive: false });
+            const handleLeave = (event) => {
+                 if (commandInterval) { console.log(`Leave detected for ${command}`); stopSending(); }
+            };
+            button.addEventListener('mouseleave', handleLeave);
+            button.addEventListener('touchcancel', handleLeave);
+        });
+
+        // --- Global Event Listeners for Release ---
+        const handleRelease = () => {
+            if (commandInterval) { console.log(`Global release detected`); stopSending(); }
+        };
+        document.addEventListener('mouseup', handleRelease);
+        document.addEventListener('touchend', handleRelease);
+
+        // --- Event Listener for dedicated Stop Button ---
+        const handleStopPress = (event) => {
+            event.preventDefault();
+            stopSending();
+            sendCommandToServer('S');
+        };
+        stopButton.addEventListener('mousedown', handleStopPress);
+        stopButton.addEventListener('touchstart', handleStopPress, { passive: false });
+
+        // Prevent context menu on long press
+        document.addEventListener('contextmenu', event => event.preventDefault());
+    </script>
+</body>
+</html>
