@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Sensor Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #eef1f5; /* Light grayish blue */
+            color: #333;
+            line-height: 1.6;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50; /* Darker blue */
+            margin-bottom: 30px;
+        }
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); /* Responsive columns */
+            gap: 25px;
+            width: 95%;
+            max-width: 1400px; /* Wider max for dashboards */
+            margin: 0 auto;
+        }
+        .sensor-box {
+            border: 1px solid #d1d9e6; /* Softer border */
+            border-radius: 10px; /* More rounded */
+            background-color: #ffffff;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08); /* Softer shadow */
+            display: flex;
+            flex-direction: column;
+        }
+        .sensor-box h3 {
+            margin-top: 0;
+            color: #34495e; /* Dark grayish blue */
+            border-bottom: 1px solid #e0e8f0;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
+            font-size: 1.4em;
+        }
+        .current-value-container {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .current-value {
+            font-size: 2.5em; /* Larger current value */
+            font-weight: 600; /* Bolder */
+            color: #27ae60; /* Green for positive data */
+        }
+        .current-value.no-data {
+            color: #95a5a6; /* Gray for no data */
+        }
+        .unit {
+            font-size: 1.1em;
+            color: #7f8c8d; /* Muted gray */
+            font-weight: 500;
+        }
+        .log-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #34495e;
+            font-size: 1.1em;
+        }
+        .log-area {
+            flex-grow: 1;
+            min-height: 180px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e0e8f0;
+            padding: 12px;
+            background-color: #fdfdfd; /* Slightly off-white */
+            border-radius: 6px;
+            list-style-type: none;
+            margin: 0;
+            font-size: 0.95em;
+        }
+        .log-area li {
+            padding: 5px 2px;
+            border-bottom: 1px dotted #e8ecf1;
+            color: #555;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: nowrap;
+        }
+        .log-area li:last-child {
+            border-bottom: none;
+        }
+        .log-timestamp {
+            color: #888;
+            margin-right: 12px;
+            white-space: nowrap;
+        }
+        .log-value {
+            white-space: nowrap;
+        }
+        .placeholder-text {
+            color: #95a5a6;
+            font-style: italic;
+            text-align: center;
+            padding: 20px;
+        }
+         /* Responsive adjustments if needed */
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr; /* Single column on smaller screens */
+            }
+            .sensor-box h3 { font-size: 1.2em; }
+            .current-value { font-size: 2em; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Robot Sensor Dashboard</h1>
+    <div class="dashboard-grid">
+        <div class="sensor-box" id="am-frequency-box">
+            <h3>AM Frequency</h3>
+            <div class="current-value-container">
+                <span id="current-frequency" class="current-value no-data">--</span>
+                <span class="unit">Hz</span>
+            </div>
+            <div class="log-title">Log (Last 20 Entries):</div>
+            <ul id="frequency-log" class="log-area">
+                <li class="placeholder-text">Waiting for data...</li>
+            </ul>
+        </div>
+
+        <div class="sensor-box" id="ultrasound-box">
+            <h3>Ultrasound UART</h3>
+            <div class="current-value-container">
+                <span id="current-ultrasound" class="current-value no-data">--</span>
+                <span class="unit">Name</span>
+            </div>
+            <div class="log-title">Log:</div>
+            <ul id="ultrasound-log" class="log-area">
+                <li class="placeholder-text">Not implemented yet.</li>
+            </ul>
+        </div>
+
+        <div class="sensor-box" id="ir-pulse-box">
+            <h3>IR Pulse</h3>
+             <div class="current-value-container">
+                <span id="current-ir-pulse" class="current-value no-data">--</span>
+                <span class="unit">Hz</span>
+            </div>
+            <div class="log-title">Log:</div>
+            <ul id="ir-pulse-log" class="log-area">
+                <li class="placeholder-text">Not implemented yet.</li>
+            </ul>
+        </div>
+
+        <div class="sensor-box" id="magnet-box">
+            <h3>Magnet Direction</h3>
+            <div class="current-value-container">
+                <span id="current-magnet" class="current-value no-data">--</span>
+                <span class="unit">Side</span>
+            </div>
+            <div class="log-title">Log:</div>
+            <ul id="magnet-log" class="log-area">
+                <li class="placeholder-text">Not implemented yet.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const currentFreqElement = document.getElementById('current-frequency');
+        const freqLogElement = document.getElementById('frequency-log');
+        const MAX_LOG_ENTRIES = 20; // How many entries to keep in the log
+        let clientFrequencyLog = []; // Client-side array to store log {timestamp, value}
+        let latestKnownFrequency = null; // Stores the most recently received frequency value
+
+        function updateFrequencyLogDisplay() {
+            if (clientFrequencyLog.length === 0) {
+                if (!freqLogElement.querySelector('.placeholder-text')) {
+                    freqLogElement.innerHTML = '<li class="placeholder-text">Waiting for data...</li>';
+                }
+                return;
+            }
+            
+            // Clear placeholder if it exists and we have data
+            if (freqLogElement.querySelector('.placeholder-text')) {
+                freqLogElement.innerHTML = '';
+            }
+
+            // Efficiently update or build the list (simple rebuild for now)
+            freqLogElement.innerHTML = ''; // Clear old log entries
+            clientFrequencyLog.forEach(entry => {
+                const listItem = document.createElement('li');
+                
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'log-timestamp';
+                timeSpan.textContent = entry.timestamp;
+                
+                const valueSpan = document.createElement('span');
+                valueSpan.className = 'log-value';
+                valueSpan.textContent = `${entry.value} Hz`;
+                
+                listItem.appendChild(timeSpan);
+                listItem.appendChild(valueSpan);
+                freqLogElement.appendChild(listItem);
+            });
+        }
+
+        // Connect to Server-Sent Events endpoint
+        const eventSource = new EventSource('/stream_sensor_data'); // Matches the new route in app.py
+
+        eventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'frequency') {
+                    if (data.value !== null && data.value !== undefined) {
+                        const newFreq = parseFloat(data.value).toFixed(2);
+                        currentFreqElement.textContent = newFreq;
+                        currentFreqElement.classList.remove('no-data');
+                        latestKnownFrequency = newFreq; // Update for the logging interval
+                    } else {
+                        currentFreqElement.textContent = '--';
+                        currentFreqElement.classList.add('no-data');
+                        latestKnownFrequency = null;
+                    }
+                }
+                // Example for future sensors:
+                // else if (data.type === 'ultrasound') { /* handle ultrasound data */ }
+            } catch (e) {
+                console.error("Error parsing SSE data:", e, "Raw data:", event.data);
+            }
+        };
+
+        eventSource.onerror = function(err) {
+            console.error("EventSource connection failed:", err);
+            currentFreqElement.textContent = "Error";
+            currentFreqElement.classList.add('no-data');
+            latestKnownFrequency = null;
+            // Display an error message or attempt to reconnect
+            if (freqLogElement.querySelector('.placeholder-text')) {
+                 freqLogElement.querySelector('.placeholder-text').textContent = "Connection error. Retrying...";
+            }
+        };
+
+        // Interval to add the latest known frequency to the client-side log
+        setInterval(() => {
+            if (latestKnownFrequency !== null) {
+                const now = new Date();
+                // Format time as HH:MM:SS
+                const timestamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                
+                // Add new entry to the beginning of the log array
+                clientFrequencyLog.unshift({ timestamp: timestamp, value: latestKnownFrequency });
+                
+                // Ensure the log does not exceed MAX_LOG_ENTRIES
+                if (clientFrequencyLog.length > MAX_LOG_ENTRIES) {
+                    clientFrequencyLog.pop(); // Remove the oldest entry from the end
+                }
+                updateFrequencyLogDisplay();
+            }
+        }, 500); // Update log every 500 milliseconds
+
+        // Initial call to set up the log display
+        updateFrequencyLogDisplay();
+    </script>
+</body>
+</html>

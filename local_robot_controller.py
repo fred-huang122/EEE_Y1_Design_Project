@@ -1,9 +1,11 @@
 import socket
 import time
 import sys
-from pynput import keyboard # Import the keyboard listener
+from pynput import keyboard
+import threading
 
-ARDUINO_PORT = 1000
+ARDUINO_COMMAND_PORT = 1000
+PYTHON_LISTEN_FREQ_PORT = 1001
 
 # Get IP from user
 target_ip = input(f"Enter the Arduino's IP Address (e.g., 192.168.137.226): ")
@@ -11,137 +13,182 @@ if not target_ip:
     print("Error: IP address cannot be empty. Exiting.")
     sys.exit()
 
-print(f"\nTargeting Arduino at {target_ip}:{ARDUINO_PORT}")
+print(f"\nTargeting Arduino at {target_ip}:{ARDUINO_COMMAND_PORT} for commands.")
+print(f"Listening for frequency data on all interfaces, port {PYTHON_LISTEN_FREQ_PORT}.") # Clarified binding
 print("\nControl the robot using WASD or Arrow Keys:")
 print("  W / Up Arrow    -> Forward (F)")
 print("  A / Left Arrow  -> Left    (L)")
 print("  D / Right Arrow -> Right   (R)")
-print("  S / Down Arrow  -> Stop    (B)")
-print("\nPress 'Q/esc' to Quit.")
+print("  S / Down Arrow  -> Backward/Stop (B)")
+print("\nPress 'Q' or 'ESC' to Quit.")
 print("-" * 30)
 
+pressed_keys = set()
+last_sent_command = ''
+running = True
+status_line_lock = threading.Lock() # To manage printing to the status line
+
 try:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    print("UDP Socket Created.")
+    send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    print("UDP Command Sending Socket Created.")
 except socket.error as e:
-    print(f"Error creating socket: {e}")
+    print(f"Error creating command sending socket: {e}")
     sys.exit()
 
-current_command = 'S' # Start in stopped state
-last_sent_command = '' 
-active_movement_key = None 
+try:
+    listen_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Try binding to the specific IP of the hotspot interface if '' causes issues,
+    # but '' should be more general. For now, keep as is.
+    listen_sock.bind(('', PYTHON_LISTEN_FREQ_PORT))
+    listen_sock.settimeout(0.5) # Shorter timeout for more responsive shutdown check
+    print(f"UDP Frequency Listening Socket Bound to port {PYTHON_LISTEN_FREQ_PORT}.")
+except socket.error as e:
+    print(f"Error creating or binding frequency listening socket: {e}")
+    if 'send_sock' in locals(): send_sock.close()
+    sys.exit()
 
-def send_command(command_to_send):
+def get_key_representation(key_event):
+    if hasattr(key_event, 'char') and key_event.char: return key_event.char.upper()
+    if key_event == keyboard.Key.up: return 'UP'
+    if key_event == keyboard.Key.down: return 'DOWN'
+    if key_event == keyboard.Key.left: return 'LEFT'
+    if key_event == keyboard.Key.right: return 'RIGHT'
+    if key_event == keyboard.Key.esc: return 'ESC'
+    return None
+
+def evaluate_current_command():
+    if 'S' in pressed_keys or 'DOWN' in pressed_keys: return 'B'
+    if 'D' in pressed_keys or 'RIGHT' in pressed_keys: return 'R'
+    if 'A' in pressed_keys or 'LEFT' in pressed_keys: return 'L'
+    if 'W' in pressed_keys or 'UP' in pressed_keys: return 'F'
+    return 'S'
+
+def print_status(message):
+    """Helper to print status messages on one line, managing clearing."""
+    with status_line_lock:
+        sys.stdout.write("\r" + " " * 80 + "\r") # Clear previous line
+        sys.stdout.write(message)
+        sys.stdout.flush()
+
+def send_robot_command(command_to_send):
     global last_sent_command
-    if command_to_send != last_sent_command:
+    if command_to_send != last_sent_command or command_to_send == 'S': # Always send S if it's the command
         try:
             message = command_to_send.encode('utf-8')
-            sock.sendto(message, (target_ip, ARDUINO_PORT))
-            print(f"Sent: '{command_to_send}'")
+            send_sock.sendto(message, (target_ip, ARDUINO_COMMAND_PORT))
+            print_status(f"Sent Command: '{command_to_send}'")
             last_sent_command = command_to_send
         except socket.gaierror:
-            print(f"Error: Hostname or IP '{target_ip}' could not be resolved.")
-            return False 
-        except socket.error as e:
-            print(f"Socket Error sending data: {e}")
-            return False # Indicate failure
-        except Exception as e:
-            print(f"An unexpected error occurred during sending: {e}")
-            return False # Indicate failure
-    return True # Indicate success or no change needed
-
-
-def on_press(key):
-    global current_command, active_movement_key
-    new_command = None
-    key_pressed = None
-
-    try:
-        key_pressed = key.char.upper()
-        if key_pressed == 'W':
-            new_command = 'F'
-        elif key_pressed == 'A':
-            new_command = 'L'
-        elif key_pressed == 'D':
-            new_command = 'R'
-        elif key_pressed == 'S':
-            new_command = 'B'
-        elif key_pressed == 'Q':
-            print("Quit key pressed...")
-            return False 
-
-    except AttributeError:
-        if key == keyboard.Key.up:
-            new_command = 'F'
-            key_pressed = keyboard.Key.up
-        elif key == keyboard.Key.left:
-            new_command = 'L'
-            key_pressed = keyboard.Key.left
-        elif key == keyboard.Key.right:
-            new_command = 'R'
-            key_pressed = keyboard.Key.right
-        elif key == keyboard.Key.down:
-            new_command = 'B'
-            key_pressed = keyboard.Key.down
-        elif key == keyboard.Key.esc:
-            print("Escape key pressed...")
+            print_status(f"Error: Hostname or IP '{target_ip}' could not be resolved.")
             return False
-
-    if new_command is not None:
-        current_command = new_command
-        active_movement_key = key_pressed 
-        if not send_command(current_command): 
-             return False 
-
-    # Keep listener running unless 'Q' or error occurred
+        except socket.error as e:
+            print_status(f"Socket Error sending command: {e}")
+            return False
+        except Exception as e:
+            print_status(f"Unexpected error sending command: {e}")
+            return False
     return True
 
+def on_press(key_event):
+    global running
+    if not running: return False
+    key_rep = get_key_representation(key_event)
+    if key_rep == 'Q' or key_rep == 'ESC':
+        print_status("\nQuit key pressed. Stopping...") # Print on new line before status clear
+        sys.stdout.flush() # Make sure it's seen
+        running = False
+        return False
+    if key_rep and key_rep not in pressed_keys:
+        pressed_keys.add(key_rep)
+        current_robot_command = evaluate_current_command()
+        send_robot_command(current_robot_command)
+    return True
 
-def on_release(key):
-    global current_command, last_sent_command, active_movement_key
-    key_released = None
-    released_command_type = None # What type of command this key represents
+def on_release(key_event):
+    if not running: return False
+    key_rep = get_key_representation(key_event)
+    if key_rep and key_rep in pressed_keys:
+        pressed_keys.remove(key_rep)
+        current_robot_command = evaluate_current_command()
+        send_robot_command(current_robot_command)
+    return True
+
+def frequency_listener_thread():
+    global running
+    print("\nFrequency listener thread started. Waiting for data...") # New line for clarity
+    last_freq_display = ""
+
+    while running:
+        try:
+            data, _ = listen_sock.recvfrom(1024)
+            message = data.decode('utf-8', errors='ignore')
+            
+            # Always print that something was received for debugging
+            # print_status(f"RX UDP from {addr[0]}:{addr[1]}: {message[:30]}...") # DEBUG Line
+
+            if message.startswith("FREQ:"):
+                try:
+                    freq_value_str = message.split(":")[1].strip()
+                    freq_value = float(freq_value_str)
+                    new_freq_display = f"Frequency: {freq_value:.2f} Hz"
+                    if new_freq_display != last_freq_display:
+                        print_status(f"Sent Command: '{last_sent_command}' | {new_freq_display}")
+                        last_freq_display = new_freq_display
+                except (IndexError, ValueError) as e:
+                    print_status(f"Sent Command: '{last_sent_command}' | Error parsing freq: {message[:20]}... ({e})")
+                    last_freq_display = "" # Reset to force update next time
+            # else: # Optional: log non-frequency packets
+            #     print_status(f"Sent Command: '{last_sent_command}' | RX Other: {message[:20]}...")
+
+
+        except socket.timeout:
+            # This is expected, just continue the loop to check 'running'
+            continue
+        except socket.error as e:
+            if running:
+                print(f"\nSocket error in frequency listener: {e}") # Print on new line
+            break
+        except Exception as e:
+            if running:
+                print(f"\nUnexpected error in frequency listener: {e}") # Print on new line
+            break
+    print("\nFrequency listener thread stopped.")
+
+
+if __name__ == "__main__":
+    freq_thread = threading.Thread(target=frequency_listener_thread, daemon=True)
+    freq_thread.start()
+
+    print("Starting keyboard listener...")
+    kb_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    kb_listener.start()
 
     try:
-        key_released = key.char.upper()
-        if key_released == 'W': released_command_type = 'F'
-        elif key_released == 'A': released_command_type = 'L'
-        elif key_released == 'D': released_command_type = 'R'
-        elif key_released == 'S': released_command_type = 'B'
-        elif key_released == 'Q': return False # Already handled in on_press, but good practice
-        elif key_released == 'ESC': return False # Also handled in on_press, but good practice
+        while running and kb_listener.is_alive():
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print_status("\nCtrl+C detected. Shutting down...")
+        sys.stdout.flush()
+        running = False
+    finally:
+        if kb_listener.is_alive():
+            kb_listener.stop()
 
-    except AttributeError:
-        if key == keyboard.Key.up:
-            released_command_type = 'F'
-            key_released = keyboard.Key.up
-        elif key == keyboard.Key.left:
-            released_command_type = 'L'
-            key_released = keyboard.Key.left
-        elif key == keyboard.Key.right:
-            released_command_type = 'R'
-            key_released = keyboard.Key.right
-        elif key == keyboard.Key.down:
-            released_command_type = 'B'
-            key_released = keyboard.Key.down
+        print_status("\nMain loop ended. Cleaning up...")
+        sys.stdout.flush()
+        running = False
 
-    # If the key that was just released is the one currently causing movement, send STOP
-    if key_released == active_movement_key and released_command_type in ['F', 'L', 'R', 'B']:
-        current_command = 'S'
-        active_movement_key = None
-        if not send_command(current_command): # Send Stop
-             return False
+        if freq_thread.is_alive():
+            print("Waiting for frequency listener to exit...")
+            freq_thread.join(timeout=1.0) # Shorter join timeout
 
-    # Keep listener running unless 'Q' or error occurred
-    return True
+        print("Sending final STOP command.")
+        send_robot_command('S') # This will use print_status
+        time.sleep(0.1)
 
-print("Starting keyboard listener... Press 'Q' to quit.")
-listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-listener.start()
-listener.join()
+        print("\nClosing sockets.") # New line
+        if 'send_sock' in locals(): send_sock.close()
+        if 'listen_sock' in locals(): listen_sock.close()
 
-print("\nListener stopped. Closing socket.")
-send_command('S')
-time.sleep(0.05)
-sock.close()
-print("Exited.")
+        print_status("Exited." + " "*70) # Clear line and print Exited
+        print() # New line at the very end

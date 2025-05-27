@@ -10,20 +10,22 @@
             height: 100%; /* Ensure body can take full height if needed */
             margin: 0;
             padding: 0;
+            overflow-x: hidden; /* Prevent horizontal scrollbars */
         }
         body {
             font-family: sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center; /* Center content vertically */
+            justify-content: center; /* Center content vertically by default */
             background-color: #e0e8f0;
             -webkit-user-select: none;
             -ms-user-select: none;
             user-select: none;
-            /* Add some padding, especially useful on mobile */
             padding: 10px; /* General padding for small screens */
             box-sizing: border-box; /* Include padding in height/width calculations */
+            /* For the scroll trick, ensure body can be slightly scrollable if content is tall */
+            /* min-height: 100.1vh; /* Alternative for forcing scrollability */
         }
 
         /* --- Heading --- */
@@ -63,9 +65,9 @@
             text-align: center;
             box-shadow: 3px 3px 6px rgba(0,0,0,0.2);
             transition: background-color 0.1s, transform 0.1s;
-            touch-action: manipulation;
+            touch-action: manipulation; /* Important for touch devices */
         }
-        .control-button.active {
+        .control-button.active { /* Visual feedback for active movement button */
             background-color: #b0c4de;
             color: white;
             transform: scale(0.95);
@@ -83,7 +85,7 @@
             font-weight: bold;
             border-color: #cc6666;
          }
-        #stop-button:active {
+        #stop-button:active { /* Stop button gets its own pressed style */
              background-color: #ff4c4c; transform: scale(0.95); box-shadow: 1px 1px 3px rgba(0,0,0,0.3);
          }
         #right-button { grid-area: right; }
@@ -147,8 +149,6 @@
             .controls-container {
                 gap: 8px; /* Smaller gap between buttons */
                 margin-bottom: 5px;
-                /* Optional: could try to make controls wider if too cramped vertically */
-                /* grid-template-columns: repeat(3, 1fr); */
             }
             .control-button {
                 width: 60px; /* Smaller buttons */
@@ -156,8 +156,7 @@
                 font-size: 0.8em; /* Smaller font */
                 border-radius: 8px;
                 box-shadow: 1px 1px 3px rgba(0,0,0,0.2);
-                /* Ensure text still fits or adjust line-height/padding */
-                line-height: 1.1;
+                line-height: 1.1; /* Adjust line height for smaller buttons */
             }
             .control-button.active {
                  transform: scale(0.93); box-shadow: 1px 1px 2px rgba(0,0,0,0.1);
@@ -195,25 +194,37 @@
         <button id="backward-button" class="control-button movement-button" data-command="B">↓<br>Back</button>
     </div>
 
-    <div id="status-message"></div>
+    <div id="status-message">Press a direction or STOP.</div>
 
     <script>
-        // ... (JavaScript remains the same as your last version with continuous sending) ...
         const statusMessageDiv = document.getElementById('status-message');
-        const movementButtons = document.querySelectorAll('.movement-button'); // F, L, R, B
+        const movementButtons = document.querySelectorAll('.movement-button');
         const stopButton = document.getElementById('stop-button');
 
-        let commandInterval = null; // Stores the ID of the interval timer
-        const COMMAND_INTERVAL_MS = 100; // Send command every 100ms when held
+        let currentCommandForInterval = 'S';
+        let activeMovementVisualButton = null;
+        const COMMAND_SEND_INTERVAL_MS = 50;
 
-        // --- Send command to server ---
-        async function sendCommandToServer(command) {
-            if (!commandInterval && command !== 'S') {
-                statusMessageDiv.textContent = 'Sending...';
-                statusMessageDiv.className = '';
+        function updateStatus(message, type = '') {
+            const typeClass = type ? ` ${type}` : '';
+            if (statusMessageDiv.textContent === message && statusMessageDiv.className.trim() === typeClass.trim()) {
+                return;
             }
-             console.log(`Attempting to send: ${command}`);
+            statusMessageDiv.textContent = message;
+            statusMessageDiv.className = '';
+            if (type) statusMessageDiv.classList.add(type);
+            console.log(`Status Update: "${message}" (Type: ${type || 'none'})`);
+        }
 
+        function clearMovementActiveVisuals() {
+            if (activeMovementVisualButton) {
+                activeMovementVisualButton.classList.remove('active');
+                activeMovementVisualButton = null;
+            }
+        }
+
+        async function sendCommandToServerAPI(command) {
+            console.log(`API: Sending command '${command}'`);
             try {
                 const response = await fetch('/send_command', {
                     method: 'POST',
@@ -221,80 +232,61 @@
                     body: JSON.stringify({ command: command }),
                 });
                 const result = await response.json();
-
                 if (!response.ok) {
-                    console.error('Error from server:', result);
-                    statusMessageDiv.textContent = result.message || `Failed to send command '${command}'.`;
-                    statusMessageDiv.classList.add('error');
-                    stopSending();
-                } else if (!commandInterval && command !== 'S') {
-                    statusMessageDiv.textContent = result.message || `Command '${command}' sent successfully!`;
-                    statusMessageDiv.classList.add('success');
-                } else if (command === 'S') {
-                     statusMessageDiv.textContent = result.message || `Command '${command}' sent successfully!`;
-                     statusMessageDiv.classList.add('success');
+                    updateStatus(result.message || `Error sending '${command}'. Server responded with error.`, 'error');
+                } else {
+                    if (command === 'S') {
+                        updateStatus(result.message || 'Robot instructed to stop.', 'success');
+                    } else if (activeMovementVisualButton && activeMovementVisualButton.getAttribute('data-command') === command) {
+                        updateStatus(result.message || `Robot command '${command}' acknowledged.`, 'success');
+                    }
                 }
             } catch (error) {
                 console.error('Network error or server down:', error);
-                statusMessageDiv.textContent = 'Network error. Is the Python server running?';
-                statusMessageDiv.classList.add('error');
-                stopSending();
+                updateStatus('Network error. Is the Python server running?', 'error');
             }
         }
 
-        // --- Stop sending commands (clear interval, send Stop) ---
-        function stopSending() {
-            if (commandInterval) {
-                clearInterval(commandInterval);
-                commandInterval = null;
-                console.log("Interval cleared, sending STOP");
-                sendCommandToServer('S');
-            }
-            clearActiveStyles();
-        }
-
-        // --- Clear active styles ---
-        function clearActiveStyles() {
-            movementButtons.forEach(btn => btn.classList.remove('active'));
-        }
-
-        // --- Event Listeners for Movement Buttons ---
         movementButtons.forEach(button => {
             const command = button.getAttribute('data-command');
             const handlePress = (event) => {
                 event.preventDefault();
-                if (commandInterval) return;
-                clearActiveStyles();
+                clearMovementActiveVisuals();
+                activeMovementVisualButton = button;
                 button.classList.add('active');
-                sendCommandToServer(command);
-                commandInterval = setInterval(() => { sendCommandToServer(command); }, COMMAND_INTERVAL_MS);
+                currentCommandForInterval = command;
+                updateStatus(`Intending to move: ${command.toUpperCase()}`);
             };
             button.addEventListener('mousedown', handlePress);
             button.addEventListener('touchstart', handlePress, { passive: false });
-            const handleLeave = (event) => {
-                 if (commandInterval) { console.log(`Leave detected for ${command}`); stopSending(); }
-            };
-            button.addEventListener('mouseleave', handleLeave);
-            button.addEventListener('touchcancel', handleLeave);
         });
 
-        // --- Global Event Listeners for Release ---
-        const handleRelease = () => {
-            if (commandInterval) { console.log(`Global release detected`); stopSending(); }
+        const handleGlobalInteractionEnd = (event) => {
+            if (currentCommandForInterval !== 'S' || activeMovementVisualButton) {
+                console.log("Global interaction end. Setting command to STOP.");
+                currentCommandForInterval = 'S';
+                clearMovementActiveVisuals();
+                updateStatus('Intending to stop.');
+            }
         };
-        document.addEventListener('mouseup', handleRelease);
-        document.addEventListener('touchend', handleRelease);
+        document.addEventListener('mouseup', handleGlobalInteractionEnd);
+        document.addEventListener('touchend', handleGlobalInteractionEnd);
+        document.addEventListener('touchcancel', handleGlobalInteractionEnd);
 
-        // --- Event Listener for dedicated Stop Button ---
-        const handleStopPress = (event) => {
+        const handleStopButtonPress = (event) => {
             event.preventDefault();
-            stopSending();
-            sendCommandToServer('S');
+            console.log("Dedicated STOP button pressed.");
+            currentCommandForInterval = 'S';
+            clearMovementActiveVisuals();
+            updateStatus('Intending to stop.');
         };
-        stopButton.addEventListener('mousedown', handleStopPress);
-        stopButton.addEventListener('touchstart', handleStopPress, { passive: false });
+        stopButton.addEventListener('mousedown', handleStopButtonPress);
+        stopButton.addEventListener('touchstart', handleStopButtonPress, { passive: false });
 
-        // Prevent context menu on long press
+        setInterval(() => {
+            sendCommandToServerAPI(currentCommandForInterval);
+        }, COMMAND_SEND_INTERVAL_MS);
+
         document.addEventListener('contextmenu', event => event.preventDefault());
     </script>
 </body>
