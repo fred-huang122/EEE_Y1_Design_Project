@@ -8,7 +8,7 @@ ARDUINO_COMMAND_PORT = 1000
 PYTHON_LISTEN_FREQ_PORT = 1001
 
 # Get IP from user
-target_ip = input(f"Enter the Arduino's IP Address (e.g., 192.168.137.226): ")
+target_ip = "192.168.137.226"
 if not target_ip:
     print("Error: IP address cannot be empty. Exiting.")
     sys.exit()
@@ -24,6 +24,7 @@ print("\nPress 'Q' or 'ESC' to Quit.")
 print("-" * 30)
 
 pressed_keys = set()
+speed_keys = set()
 last_sent_command = ''
 running = True
 status_line_lock = threading.Lock() # To manage printing to the status line
@@ -53,15 +54,41 @@ def get_key_representation(key_event):
     if key_event == keyboard.Key.down: return 'DOWN'
     if key_event == keyboard.Key.left: return 'LEFT'
     if key_event == keyboard.Key.right: return 'RIGHT'
+    if key_event == keyboard.Key.shift: return 'FASTER'
+    if key_event == keyboard.Key.ctrl_l: return 'SLOWER'
     if key_event == keyboard.Key.esc: return 'ESC'
     return None
 
 def evaluate_current_command():
-    if 'S' in pressed_keys or 'DOWN' in pressed_keys: return 'B'
-    if 'D' in pressed_keys or 'RIGHT' in pressed_keys: return 'R'
-    if 'A' in pressed_keys or 'LEFT' in pressed_keys: return 'L'
-    if 'W' in pressed_keys or 'UP' in pressed_keys: return 'F'
+    if last_sent_command == '': return 'S'
+    
+    if len(pressed_keys) == 1 and ('S' in pressed_keys or 'DOWN' in pressed_keys or '\x13' in pressed_keys): return 'B'
+    if last_sent_command[0] == 'B' and ('D' in pressed_keys or 'RIGHT' in pressed_keys or '\x04' in pressed_keys): return 'R'
+    if last_sent_command[0] == 'B' and ('A' in pressed_keys or 'LEFT' in pressed_keys or '\x01' in pressed_keys): return 'L'
+
+    if len(pressed_keys) == 1 and ('D' in pressed_keys or 'RIGHT' in pressed_keys or '\x04' in pressed_keys): return 'R'
+    if last_sent_command[0] == 'R' and ('W' in pressed_keys or 'UP' in pressed_keys or '\x17' in pressed_keys): return 'F'
+    if last_sent_command[0] == 'R' and ('S' in pressed_keys or 'DOWN' in pressed_keys or '\x13' in pressed_keys): return 'B'
+
+    if len(pressed_keys) == 1 and ('A' in pressed_keys or 'LEFT' in pressed_keys or '\x01' in pressed_keys): return 'L'
+    if last_sent_command[0] == 'L' and ('W' in pressed_keys or 'UP' in pressed_keys or '\x17' in pressed_keys): return 'F'
+    if last_sent_command[0] == 'L' and ('S' in pressed_keys or 'DOWN' in pressed_keys or '\x13' in pressed_keys): return 'B'
+
+    if len(pressed_keys) == 1 and ('W' in pressed_keys or 'UP' in pressed_keys or '\x17' in pressed_keys): return 'F'
+    if last_sent_command[0] == 'F' and ('D' in pressed_keys or 'RIGHT' in pressed_keys or '\x04' in pressed_keys): return 'R'
+    if last_sent_command[0] == 'F' and ('A' in pressed_keys or 'LEFT' in pressed_keys or '\x01' in pressed_keys): return 'L'
+
+
     return 'S'
+
+def evaluate_speed_command(current_command: str):
+    if current_command == 'S':
+        return 'S'
+    if 'FASTER' in speed_keys:
+        return current_command + 'F'
+    elif 'SLOWER' in speed_keys:
+        return current_command + 'S'
+    return current_command
 
 def print_status(message):
     """Helper to print status messages on one line, managing clearing."""
@@ -76,7 +103,7 @@ def send_robot_command(command_to_send):
         try:
             message = command_to_send.encode('utf-8')
             send_sock.sendto(message, (target_ip, ARDUINO_COMMAND_PORT))
-            print_status(f"Sent Command: '{command_to_send}'")
+            print_status(f"Sent Command: '{command_to_send}")
             last_sent_command = command_to_send
         except socket.gaierror:
             print_status(f"Error: Hostname or IP '{target_ip}' could not be resolved.")
@@ -98,18 +125,34 @@ def on_press(key_event):
         sys.stdout.flush() # Make sure it's seen
         running = False
         return False
-    if key_rep and key_rep not in pressed_keys:
+    if key_rep == 'FASTER' or key_rep == 'SLOWER' and key_rep not in speed_keys:
+        speed_keys.add(key_rep)
+        current_robot_command = evaluate_current_command()
+        current_robot_command = evaluate_speed_command(current_robot_command)
+        print(f" Speed Keys: {speed_keys} | Pressed: {pressed_keys} | Current Command: {current_robot_command}")
+        return send_robot_command(current_robot_command)
+
+    if key_rep not in pressed_keys and key_rep not in ['FASTER', 'SLOWER']:
         pressed_keys.add(key_rep)
         current_robot_command = evaluate_current_command()
+        current_robot_command = evaluate_speed_command(current_robot_command)
+        print(f" Speed Keys: {speed_keys} | Pressed: {pressed_keys} | Current Command: {current_robot_command}")
         send_robot_command(current_robot_command)
     return True
 
 def on_release(key_event):
     if not running: return False
     key_rep = get_key_representation(key_event)
-    if key_rep and key_rep in pressed_keys:
+    if key_rep == 'FASTER' or key_rep == 'SLOWER' and key_rep in speed_keys:
+        speed_keys.remove(key_rep)
+        current_robot_command = evaluate_current_command()
+        current_robot_command = evaluate_speed_command(current_robot_command)
+        send_robot_command(current_robot_command)
+
+    if key_rep in pressed_keys and key_rep != 'FASTER' and key_rep != 'SLOWER':
         pressed_keys.remove(key_rep)
         current_robot_command = evaluate_current_command()
+        current_robot_command = evaluate_speed_command(current_robot_command)
         send_robot_command(current_robot_command)
     return True
 
