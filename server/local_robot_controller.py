@@ -5,7 +5,7 @@ from pynput import keyboard
 import threading
 
 ARDUINO_COMMAND_PORT = 1000
-PYTHON_LISTEN_FREQ_PORT = 1001
+PYTHON_LISTEN_FREQ_PORT = 1002
 
 # Get IP from user
 target_ip = "192.168.137.226"
@@ -129,14 +129,14 @@ def on_press(key_event):
         speed_keys.add(key_rep)
         current_robot_command = evaluate_current_command()
         current_robot_command = evaluate_speed_command(current_robot_command)
-        print(f" Speed Keys: {speed_keys} | Pressed: {pressed_keys} | Current Command: {current_robot_command}")
+        # print(f" Speed Keys: {speed_keys} | Pressed: {pressed_keys} | Current Command: {current_robot_command}")
         return send_robot_command(current_robot_command)
 
     if key_rep not in pressed_keys and key_rep not in ['FASTER', 'SLOWER']:
         pressed_keys.add(key_rep)
         current_robot_command = evaluate_current_command()
         current_robot_command = evaluate_speed_command(current_robot_command)
-        print(f" Speed Keys: {speed_keys} | Pressed: {pressed_keys} | Current Command: {current_robot_command}")
+        # print(f" Speed Keys: {speed_keys} | Pressed: {pressed_keys} | Current Command: {current_robot_command}")
         send_robot_command(current_robot_command)
     return True
 
@@ -157,11 +157,12 @@ def on_release(key_event):
     return True
 
 def frequency_listener_thread():
+    return
     global running
     print("\nFrequency listener thread started. Waiting for data...") # New line for clarity
     last_freq_display = ""
 
-    while running:
+    while running:  
         try:
             data, _ = listen_sock.recvfrom(1024)
             message = data.decode('utf-8', errors='ignore')
@@ -199,8 +200,9 @@ def frequency_listener_thread():
 
 
 if __name__ == "__main__":
-    freq_thread = threading.Thread(target=frequency_listener_thread, daemon=True)
-    freq_thread.start()
+    # for debugging
+    # freq_thread = threading.Thread(target=frequency_listener_thread, daemon=True)
+    # freq_thread.start()
 
     print("Starting keyboard listener...")
     kb_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
@@ -221,9 +223,9 @@ if __name__ == "__main__":
         sys.stdout.flush()
         running = False
 
-        if freq_thread.is_alive():
-            print("Waiting for frequency listener to exit...")
-            freq_thread.join(timeout=1.0) # Shorter join timeout
+        # if freq_thread.is_alive():
+        #     print("Waiting for frequency listener to exit...")
+        #     freq_thread.join(timeout=1.0) # Shorter join timeout
 
         print("Sending final STOP command.")
         send_robot_command('S') # This will use print_status
@@ -231,7 +233,7 @@ if __name__ == "__main__":
 
         print("\nClosing sockets.") # New line
         if 'send_sock' in locals(): send_sock.close()
-        if 'listen_sock' in locals(): listen_sock.close()
+        # if 'listen_sock' in locals(): listen_sock.close()
 
         print_status("Exited." + " "*70) # Clear line and print Exited
         print() # New line at the very end

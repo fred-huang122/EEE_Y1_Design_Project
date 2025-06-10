@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Sensor Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='sensor_dashboard.css') }}">
+</head>
+<body>
+    <h1>Robot Sensor Dashboard</h1>
+    <div class="dashboard-grid">
+        <div class="sensor-box" id="am-frequency-box">
+            <h3>AM Frequency</h3>
+            <div class="current-value-container">
+                <span id="current-frequency" class="current-value no-data">--</span>
+                <span class="unit">Hz</span>
+            </div>
+            <div class="log-title">Log (Last 20 Entries):</div>
+            <ul id="frequency-log" class="log-area">
+                <li class="placeholder-text">Waiting for data...</li>
+            </ul>
+        </div>
+
+        <div class="sensor-box" id="ultrasound-box">
+            <h3>Ultrasound UART Name</h3> <div class="current-value-container">
+                <span id="current-ultrasound" class="current-value no-data">--</span>
+                <span class="unit">Name</span> </div>
+            <div class="log-title">Log:</div>
+            <ul id="ultrasound-log" class="log-area">
+                <li class="placeholder-text">Waiting for UART data...</li> </ul>
+        </div>
+
+        <div class="sensor-box" id="ir-pulse-box">
+            <h3>IR Pulse</h3>
+             <div class="current-value-container">
+                <span id="current-ir-pulse" class="current-value no-data">--</span>
+                <span class="unit">Hz</span>
+            </div>
+            <div class="log-title">Log:</div>
+            <ul id="ir-pulse-log" class="log-area">
+                <li class="placeholder-text">Not implemented yet.</li>
+            </ul>
+        </div>
+
+        <div class="sensor-box" id="magnet-box">
+            <h3>Magnet Direction</h3>
+            <div class="current-value-container">
+                <span id="current-magnet" class="current-value no-data">--</span>
+                <span class="unit">Side</span>
+            </div>
+            <div class="log-title">Log:</div>
+            <ul id="magnet-log" class="log-area">
+                <li class="placeholder-text">Not implemented yet.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const currentFreqElement = document.getElementById('current-frequency');
+        const freqLogElement = document.getElementById('frequency-log');
+        const MAX_LOG_ENTRIES = 20;
+        let clientFrequencyLog = [];
+        let latestKnownFrequency = null;
+
+        // --- Get reference to Ultrasound UART elements ---
+        const currentUltrasoundElement = document.getElementById('current-ultrasound');
+        const ultrasoundLogElement = document.getElementById('ultrasound-log'); // For optional logging
+
+        function updateFrequencyLogDisplay() {
+            if (clientFrequencyLog.length === 0) {
+                if (!freqLogElement.querySelector('.placeholder-text')) {
+                    freqLogElement.innerHTML = '<li class="placeholder-text">Waiting for data...</li>';
+                }
+                return;
+            }
+            
+            if (freqLogElement.querySelector('.placeholder-text')) {
+                freqLogElement.innerHTML = '';
+            }
+
+            freqLogElement.innerHTML = ''; 
+            clientFrequencyLog.forEach(entry => {
+                const listItem = document.createElement('li');
+                
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'log-timestamp';
+                timeSpan.textContent = entry.timestamp;
+                
+                const valueSpan = document.createElement('span');
+                valueSpan.className = 'log-value';
+                valueSpan.textContent = `${entry.value} Hz`;
+                
+                listItem.appendChild(timeSpan);
+                listItem.appendChild(valueSpan);
+                freqLogElement.appendChild(listItem);
+            });
+        }
+
+        const eventSource = new EventSource('/stream_sensor_data');
+
+        eventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'frequency') {
+                    if (data.value !== null && data.value !== undefined) {
+                        const newFreq = parseFloat(data.value).toFixed(2);
+                        currentFreqElement.textContent = newFreq;
+                        currentFreqElement.classList.remove('no-data');
+                        latestKnownFrequency = newFreq; 
+                    } else {
+                        currentFreqElement.textContent = '--';
+                        currentFreqElement.classList.add('no-data');
+                        latestKnownFrequency = null;
+                    }
+                } 
+                // +++ Handle UART Data +++
+                else if (data.type === 'uart_data') {
+                    if (data.value !== null && data.value !== undefined) {
+                        let displayText = data.value;
+                        if (data.packet_type === 'FAIL') {
+                            // Optionally distinguish failed packets, e.g., by prefixing or styling
+                            // For now, just display the value. You could add:
+                            // displayText = "Partial: " + data.value;
+                            // currentUltrasoundElement.classList.add('fail-data'); // (Define .fail-data in CSS)
+                            // currentUltrasoundElement.classList.remove('success-data');
+                            currentUltrasoundElement.style.color = '#e74c3c'; // Example: Make text red for fail
+                        } else if (data.packet_type === 'PKT') {
+                            // currentUltrasoundElement.classList.add('success-data'); // (Define .success-data in CSS)
+                            // currentUltrasoundElement.classList.remove('fail-data');
+                             currentUltrasoundElement.style.color = '#27ae60'; // Example: Make text green for success (like frequency)
+                        } else {
+                            currentUltrasoundElement.style.color = ''; // Reset color if type is unknown
+                        }
+                        currentUltrasoundElement.textContent = displayText;
+                        currentUltrasoundElement.classList.remove('no-data');
+
+                        // Optional: Add to ultrasound log
+                        if (ultrasoundLogElement.querySelector('.placeholder-text')) {
+                            ultrasoundLogElement.innerHTML = ''; // Clear "Waiting for UART data..."
+                        }
+                        const listItem = document.createElement('li');
+                        const timeSpan = document.createElement('span');
+                        timeSpan.className = 'log-timestamp';
+                        const now = new Date();
+                        timeSpan.textContent = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                        
+                        const valueSpan = document.createElement('span');
+                        valueSpan.className = 'log-value'; // You might want different styling
+                        valueSpan.textContent = `${data.packet_type}: ${data.value}`;
+                        
+                        listItem.appendChild(timeSpan);
+                        listItem.appendChild(valueSpan);
+                        // Add to the top of the log
+                        if (ultrasoundLogElement.firstChild) {
+                            ultrasoundLogElement.insertBefore(listItem, ultrasoundLogElement.firstChild);
+                        } else {
+                            ultrasoundLogElement.appendChild(listItem);
+                        }
+                        // Optional: Limit log entries
+                        while (ultrasoundLogElement.children.length > MAX_LOG_ENTRIES) {
+                           ultrasoundLogElement.removeChild(ultrasoundLogElement.lastChild);
+                        }
+
+                    } else {
+                        currentUltrasoundElement.textContent = '--';
+                        currentUltrasoundElement.classList.add('no-data');
+                        currentUltrasoundElement.style.color = ''; // Reset color
+                    }
+                }
+                // +++ End of UART Data Handling +++
+
+            } catch (e) {
+                console.error("Error parsing SSE data:", e, "Raw data:", event.data);
+            }
+        };
+
+        eventSource.onerror = function(err) {
+            console.error("EventSource connection failed:", err);
+            currentFreqElement.textContent = "Error";
+            currentFreqElement.classList.add('no-data');
+            latestKnownFrequency = null;
+            if (freqLogElement.querySelector('.placeholder-text')) {
+                 freqLogElement.querySelector('.placeholder-text').textContent = "Connection error. Retrying...";
+            }
+            // Also update Ultrasound display on error
+            currentUltrasoundElement.textContent = "Error";
+            currentUltrasoundElement.classList.add('no-data');
+            currentUltrasoundElement.style.color = ''; 
+             if (ultrasoundLogElement.querySelector('.placeholder-text')) {
+                 ultrasoundLogElement.querySelector('.placeholder-text').textContent = "Connection error.";
+            }
+        };
+
+        setInterval(() => {
+            if (latestKnownFrequency !== null) {
+                const now = new Date();
+                const timestamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                
+                clientFrequencyLog.unshift({ timestamp: timestamp, value: latestKnownFrequency });
+                
+                if (clientFrequencyLog.length > MAX_LOG_ENTRIES) {
+                    clientFrequencyLog.pop(); 
+                }
+                updateFrequencyLogDisplay();
+            }
+        }, 500); // Frequency log updates every 500ms if new data has arrived
+
+        updateFrequencyLogDisplay();
+        // Initial state for ultrasound log placeholder if needed
+        if (ultrasoundLogElement.children.length === 0) {
+             ultrasoundLogElement.innerHTML = '<li class="placeholder-text">Waiting for UART data...</li>';
+        }
+    </script>
+</body>
+</html>
