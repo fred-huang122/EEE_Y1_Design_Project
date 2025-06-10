@@ -1,0 +1,71 @@
+/*  ────────────────────────────────────────────────────────────
+    Pulse-to-Frequency ID  –  complete UNO sketch
+    – Measures the interval between rising edges on PULSE_PIN
+    – Converts it to frequency
+    – Tags it “wibbo” (457 Hz ±40) or “snorkle” (293 Hz ±40)
+    ──────────────────────────────────────────────────────────── */
+
+/* ─── USER SETTINGS ─────────────────────────────────────────── */
+const byte     PULSE_PIN   = 2;   // INT0.  Change to 3 for INT1 if you like
+const uint16_t WIBBO_HZ    = 457;
+const uint16_t SNORKLE_HZ  = 293;
+const uint8_t  TOLERANCE   = 40;  // ±Hz window
+/* ───────────────────────────────────────────────────────────── */
+
+volatile unsigned long lastMicros = 0;
+volatile unsigned long period_us  = 0;
+volatile bool          freshFlag  = false;
+
+/* ─── Interrupt Service Routine (runs on every rising edge) ─── */
+void pulseISR()
+{
+  unsigned long now   = micros();
+  unsigned long delta = now - lastMicros;
+
+  if (lastMicros && delta > 200) {      // ignore first edge & noise >5 kHz
+    period_us  = delta;
+    freshFlag  = true;
+  }
+  lastMicros = now;
+}
+
+/* ─── Helper: read one fresh measurement, if there is one ───── */
+bool readPulse(float &freq, String &label)
+{
+  if (!freshFlag) return false;
+
+  noInterrupts();
+  unsigned long T = period_us;   // copy atomically
+  freshFlag = false;
+  interrupts();
+
+  freq = 1e6 / T;                // µs → Hz
+
+  if (abs(freq - WIBBO_HZ)   <= TOLERANCE) label = F("wibbo");
+  else if (abs(freq - SNORKLE_HZ) <= TOLERANCE) label = F("snorkle");
+  else                                         label = F("unidentified");
+
+  return true;
+}
+
+/* ─── Arduino entry points ───────────────────────────────────── */
+void setup()
+{
+  Serial.begin(115200);
+  pinMode(PULSE_PIN, INPUT);                     // rely on external pull-up/down
+  attachInterrupt(digitalPinToInterrupt(PULSE_PIN), pulseISR, RISING);
+  Serial.println(F("Waiting for pulses…"));
+}
+
+void loop()
+{
+  float  freq;
+  String tag;
+
+  if (readPulse(freq, tag)) {
+    Serial.print(F("Frequency = "));
+    Serial.print(freq, 1);
+    Serial.print(F(" Hz   →   "));
+    Serial.println(tag);
+  }
+}
