@@ -31,7 +31,7 @@ char irSendBuffer[PACKET_BUFFER_SIZE];
 char uartDataPacketBuffer[5];
 int uartDataCharCount = 0;
 unsigned long lastUartCharTime = 0;
-const unsigned long UART_INTER_CHAR_TIMEOUT = 100;
+const unsigned long UART_INTER_CHAR_TIMEOUT = 250;
 
 #define UART_SERIAL Serial1
 #define UART_BAUD_RATE 600
@@ -50,7 +50,7 @@ const int motorPinREn = 9;
 const int amSignalIn = 0;
 long count = 0;
 unsigned long previousMillis = 0;
-const long interval = 500;
+const long interval = 300;
 boolean lastInputState = false;
 
 // --- Magnetic Sensor ---
@@ -62,8 +62,9 @@ const int analogMax = 1023;
 
 // --- IR Pulse Detection (Polling Method) ---
 const int IR_PULSE_PIN = A1;
-unsigned long irLastRiseTime = 0;
-bool irLastPinState = LOW;
+volatile unsigned long ir_lastMicros = 0;
+volatile unsigned long ir_period_us  = 0;
+volatile bool          ir_freshFlag  = false;
 
 // --- State Machine ---
 enum OperatingMode {
@@ -88,6 +89,7 @@ void setup() {
   pinMode(amSignalIn, INPUT);
 
   pinMode(IR_PULSE_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(IR_PULSE_PIN), irPulseISR, RISING);
   
   stopMotors();
   Serial.println("Motor pins initialized.");
@@ -147,7 +149,7 @@ void loop() {
   if (currentMode == READING_UART) {
     handleUart();
   } else { // currentMode == READING_FREQUENCY
-    handleFrequency();
+    handleAMFrequency();
   }
 }
 
@@ -171,36 +173,46 @@ void handleUdpCommands() {
   }
 }
 
-void handleIrPulse() {
-  bool currentPinState = digitalRead(IR_PULSE_PIN);
+void irPulseISR() {
+  unsigned long now = micros();
+  unsigned long delta = now - ir_lastMicros;
 
-  // Check for a rising edge (pin went from LOW to HIGH)
-  if (currentPinState == HIGH && irLastPinState == LOW) {
-    unsigned long now = micros();
-    // Check if there was a previous rising edge to measure against
-    if (irLastRiseTime > 0) {
-      unsigned long period_us = now - irLastRiseTime;
-      // Calculate frequency, avoiding division by zero
-      if (period_us > 0) {
-        float frequency = 1000000.0f / period_us;
-
-        Serial.print("IR Freq: ");
-        Serial.println(frequency);
-
-        // Send the raw frequency value over UDP
-        if (controllerAddressKnown) {
-          sprintf(irSendBuffer, "IR:%.2f", frequency);
-          Udp.beginPacket(controllerIP, PYTHON_LISTEN_PORT);
-          Udp.write((uint8_t*)irSendBuffer, strlen(irSendBuffer));
-          Udp.endPacket();
-        }
-      }
-    }
-    // Record the time of this rising edge for the next calculation
-    irLastRiseTime = now;
+  // Debounce/noise filter: ignore pulses that are too fast (e.g., > 5 kHz)
+  // and ignore the very first pulse after startup.
+  if (ir_lastMicros != 0 && delta > 200) {
+    ir_period_us = delta;
+    ir_freshFlag = true; // Signal the main loop that we have fresh data
   }
-  // Update the last known state of the pin
-  irLastPinState = currentPinState;
+  ir_lastMicros = now;
+}
+
+void handleIrPulse() {
+  if (!ir_freshFlag) { return; }
+
+  unsigned long period_us_copy;
+
+  // Disable interrupts briefly to safely copy the volatile variable.
+  // This prevents the ISR from changing ir_period_us while we're reading it.
+  noInterrupts();
+  period_us_copy = ir_period_us;
+  ir_freshFlag = false; // Reset the flag so we don't process the same data twice
+  interrupts();
+
+  // Slower calculations and network communication
+  if (period_us_copy > 0) {
+    float frequency = 1000000.0f / period_us_copy;
+
+    Serial.print("IR Freq: ");
+    Serial.println(frequency);
+
+    // Send the raw frequency value over UDP
+    if (controllerAddressKnown) {
+      sprintf(irSendBuffer, "IR:%.2f", frequency);
+      Udp.beginPacket(controllerIP, PYTHON_LISTEN_PORT);
+      Udp.write((uint8_t*)irSendBuffer, strlen(irSendBuffer));
+      Udp.endPacket();
+    }
+  }
 }
 
 void handleMagneticSensor() {
@@ -268,7 +280,7 @@ void handleUart() {
   }
 }
 
-void handleFrequency() {
+void handleAMFrequency() {
   bool value = digitalRead(amSignalIn);
   if (value != lastInputState) {
     count++;
@@ -276,20 +288,26 @@ void handleFrequency() {
   }
 
   unsigned long currentMillis = millis();
+
   if (currentMillis - previousMillis >= interval) {
+    unsigned long interval = currentMillis - previousMillis;
     previousMillis = currentMillis;
-    float frequency = (float)count / ((float)interval / 1000.0f);
-    Serial.print("Freq: ");
-    Serial.println(frequency);
-    
+
+    float hertz = 0.0;
+    if (interval > 0) {
+      // We count both rising and falling edges, so `count` is twice the
+      // number of full cycles. We must divide the count by 2.
+      hertz = ((float)count / 2.0f) / ((float)interval / 1000.0f);
+    }
+
     if (controllerAddressKnown) {
-      sprintf(freqSendBuffer, "FREQ:%.2f", frequency);
+      sprintf(freqSendBuffer, "FREQ:%.2f", hertz);
       Udp.beginPacket(controllerIP, PYTHON_LISTEN_PORT);
       Udp.write((uint8_t*)freqSendBuffer, strlen(freqSendBuffer));
       Udp.endPacket();
     }
 
-    count = 0;
+    count = 0; // Reset counter for the next measurement window
     switchToMode(READING_UART);
   }
 }
@@ -310,6 +328,12 @@ void switchToMode(OperatingMode newMode) {
     // Configure hardware for Frequency counting
     UART_SERIAL.end(); // Disable UART to avoid receiving junk data
     digitalWrite(MUXSel, LOW);
+
+    // Reset the frequency timer and counter at the start of the mode.
+    previousMillis = millis();
+    count = 0;
+    lastInputState = digitalRead(amSignalIn);
+
     delay(100);
     Serial.println("Switched to Frequency mode.");
   }
