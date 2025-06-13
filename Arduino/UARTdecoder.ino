@@ -1,3 +1,4 @@
+// Arduino board: This code is intended for UART Testing
 char nameBuffer[4];
 int nameCharCount = 0;
 bool expectingNameChars = false;
