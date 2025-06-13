@@ -31,7 +31,7 @@ char irSendBuffer[PACKET_BUFFER_SIZE];
 char uartDataPacketBuffer[5];
 int uartDataCharCount = 0;
 unsigned long lastUartCharTime = 0;
-const unsigned long UART_INTER_CHAR_TIMEOUT = 250;
+const unsigned long UART_INTER_CHAR_TIMEOUT = 200;
 
 #define UART_SERIAL Serial1
 #define UART_BAUD_RATE 600
@@ -50,14 +50,14 @@ const int motorPinREn = 9;
 const int amSignalIn = 0;
 long count = 0;
 unsigned long previousMillis = 0;
-const long interval = 300;
+const long interval = 350;
 boolean lastInputState = false;
 
 // --- Magnetic Sensor ---
 const int magneticSensorPin = A0;
 unsigned long lastMagReadTime = 0;
 const unsigned long MAG_READ_INTERVAL = 200; // How often to read the sensor (ms)
-const float Vref = 5.0;
+const float Vref = 3.3;
 const int analogMax = 1023;
 
 // --- IR Pulse Detection (Polling Method) ---
@@ -116,6 +116,7 @@ void setup() {
     Serial.print(".");
     delay(1000);
     status = WiFi.status();
+    status = WiFi.begin(WIFI_SSID, WIFI_PASS);
   }
 
   if (status == WL_CONNECTED) {
@@ -224,16 +225,13 @@ void handleMagneticSensor() {
     float voltage = (float)sensorValue * (Vref / (float)analogMax);
     char polarityStr[10];
 
-    if (voltage < 2.2) {
+    if (voltage > 2.3) {
       strcpy(polarityStr, "South");
-    } else if (voltage > 0.8) {
+    } else if (voltage < 1) {
       strcpy(polarityStr, "North");
     } else {
       strcpy(polarityStr, "Unknown");
-    }
-
-    Serial.print("Mag: ");
-    Serial.println(polarityStr);
+    }         
 
     // Only send if we know who to send to
     if (controllerAddressKnown) {
@@ -254,6 +252,8 @@ void handleUart() {
       uartDataPacketBuffer[uartDataCharCount++] = (char)incomingUARTByte;
 
       if (uartDataCharCount == 4) {
+        Serial.print("UART: ");
+        Serial.println(uartDataPacketBuffer);
         uartDataPacketBuffer[4] = '\0';
         if (controllerAddressKnown) {
           sprintf(UARTSendBuffer, "UART_PKT:%s", uartDataPacketBuffer);
@@ -277,6 +277,8 @@ void handleUart() {
       switchToMode(READING_FREQUENCY);
     }
     uartDataCharCount = 0;
+  } else if (millis() - lastUartCharTime > UART_INTER_CHAR_TIMEOUT) {
+      switchToMode(READING_FREQUENCY);
   }
 }
 
@@ -290,17 +292,17 @@ void handleAMFrequency() {
   unsigned long currentMillis = millis();
 
   if (currentMillis - previousMillis >= interval) {
-    unsigned long interval = currentMillis - previousMillis;
+    unsigned long true_interval = currentMillis - previousMillis;
     previousMillis = currentMillis;
 
     float hertz = 0.0;
-    if (interval > 0) {
+    if (true_interval > 0) {
       // We count both rising and falling edges, so `count` is twice the
       // number of full cycles. We must divide the count by 2.
-      hertz = ((float)count / 2.0f) / ((float)interval / 1000.0f);
+      hertz = ((float)count / 2.0f) / ((float)true_interval / 1000.0f);
     }
 
-    if (controllerAddressKnown) {
+    if (controllerAddressKnown && hertz > 0) {
       sprintf(freqSendBuffer, "FREQ:%.2f", hertz);
       Udp.beginPacket(controllerIP, PYTHON_LISTEN_PORT);
       Udp.write((uint8_t*)freqSendBuffer, strlen(freqSendBuffer));
@@ -323,20 +325,17 @@ void switchToMode(OperatingMode newMode) {
     digitalWrite(MUXSel, HIGH);
     UART_SERIAL.begin(UART_BAUD_RATE, SERIAL_8N1);
     delay(100);
-    Serial.println("Switched to UART mode.");
   } else { // READING_FREQUENCY
     // Configure hardware for Frequency counting
     UART_SERIAL.end(); // Disable UART to avoid receiving junk data
     digitalWrite(MUXSel, LOW);
+    delay(100);
 
     // Reset the frequency timer and counter at the start of the mode.
     previousMillis = millis();
     count = 0;
     lastInputState = digitalRead(amSignalIn);
-
-    delay(100);
-    Serial.println("Switched to Frequency mode.");
-  }
+    }
 }
 
 
