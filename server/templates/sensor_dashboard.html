@@ -5,10 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Sensor Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='sensor_dashboard.css') }}">
-</head>
-<body>
+</head><body>
     <h1>Robot Sensor Dashboard</h1>
     <div class="dashboard-grid">
+        <div class="sensor-box summary-box" id="duck-name-box">
+            <h3>Duck Name</h3>
+            <div class="current-value-container">
+                <span id="duck-name" class="current-value no-data">--</span>
+                <span class="unit">Name</span>
+            </div>
+        </div>
+
+        <div class="sensor-box summary-box" id="species-box">
+            <h3>Detected Species</h3>
+            <div class="current-value-container">
+                <span id="species-name" class="current-value no-data">--</span>
+                <span class="unit">Species</span>
+            </div>
+        </div>
+
         <div class="sensor-box" id="am-frequency-box">
             <h3>AM Frequency</h3>
             <div class="current-value-container">
@@ -22,12 +37,15 @@
         </div>
 
         <div class="sensor-box" id="ultrasound-box">
-            <h3>Ultrasound UART Name</h3> <div class="current-value-container">
+            <h3>Ultrasound UART</h3>
+            <div class="current-value-container">
                 <span id="current-ultrasound" class="current-value no-data">--</span>
-                <span class="unit">Name</span> </div>
+                <span class="unit">Data</span>
+            </div>
             <div class="log-title">Log:</div>
             <ul id="ultrasound-log" class="log-area">
-                <li class="placeholder-text">Waiting for UART data...</li> </ul>
+                <li class="placeholder-text">Waiting for UART data...</li>
+            </ul>
         </div>
 
         <div class="sensor-box" id="ir-pulse-box">
@@ -38,7 +56,7 @@
             </div>
             <div class="log-title">Log:</div>
             <ul id="ir-pulse-log" class="log-area">
-                <li class="placeholder-text">Not implemented yet.</li>
+                <li class="placeholder-text">Waiting for data...</li>
             </ul>
         </div>
 
@@ -50,50 +68,106 @@
             </div>
             <div class="log-title">Log:</div>
             <ul id="magnet-log" class="log-area">
-                <li class="placeholder-text">Not implemented yet.</li>
+                <li class="placeholder-text">Waiting for data...</li>
             </ul>
         </div>
     </div>
 
     <script>
+        const MAX_LOG_ENTRIES = 20;
+        const TIMEOUT_INTERVALS = 4;
+
+        // --- Element References ---
+        const duckNameElement = document.getElementById('duck-name');
+        const speciesNameElement = document.getElementById('species-name');
         const currentFreqElement = document.getElementById('current-frequency');
         const freqLogElement = document.getElementById('frequency-log');
-        const MAX_LOG_ENTRIES = 20;
+        const currentUltrasoundElement = document.getElementById('current-ultrasound');
+        const ultrasoundLogElement = document.getElementById('ultrasound-log');
+        const currentIrPulseElement = document.getElementById('current-ir-pulse');
+        const irPulseLogElement = document.getElementById('ir-pulse-log');
+        const currentMagnetElement = document.getElementById('current-magnet');
+        const magnetLogElement = document.getElementById('magnet-log');
+
+        // --- State and Timeout Management ---
         let clientFrequencyLog = [];
         let latestKnownFrequency = null;
+        let latestIrPulse = 0.0;
+        let latestMagnetDirection = 'Unknown';
+        let uartTimeout;
+        let irTimeout;
+        let irZeroLogged = false;
 
-        // --- Get reference to Ultrasound UART elements ---
-        const currentUltrasoundElement = document.getElementById('current-ultrasound');
-        const ultrasoundLogElement = document.getElementById('ultrasound-log'); // For optional logging
+        // Deduces the species with a fallback for an unknown magnetic field.
+        function deduceSpecies() {
+            const isMagnetUp = latestMagnetDirection === 'North';
+            const isMagnetDown = latestMagnetDirection === 'South';
+            const magneticIsUnknown = !isMagnetUp && !isMagnetDown;
 
-        function updateFrequencyLogDisplay() {
-            if (clientFrequencyLog.length === 0) {
-                if (!freqLogElement.querySelector('.placeholder-text')) {
-                    freqLogElement.innerHTML = '<li class="placeholder-text">Waiting for data...</li>';
-                }
-                return;
+            const irFreq = parseFloat(latestIrPulse) || 0;
+            const amFreq = parseFloat(latestKnownFrequency) || 0;
+
+            let species = 'Unknown';
+
+            // Define frequency range checks
+            const isWibboRange = irFreq >= 407 && irFreq <= 507;      // Wibbo: 457Hz +/- 50Hz
+            const isGribbitRange = amFreq >= 80 && amFreq <= 120;     // Gribbit: 100Hz +/- 20Hz
+            const isSnorkleRange = irFreq >= 243 && irFreq <= 343;    // Snorkle: 293Hz +/- 50Hz
+            const isZappleRange = amFreq >= 130 && amFreq <= 170;     // Zapple: 150Hz +/- 20Hz
+
+            // Primary logic: Use magnetic field first if it's detected
+            if (isMagnetDown) {
+                if (isWibboRange) species = 'Wibbo';
+                else if (isGribbitRange) species = 'Gribbit';
+            } else if (isMagnetUp) {
+                if (isSnorkleRange) species = 'Snorkle';
+                else if (isZappleRange) species = 'Zapple';
             }
-            
-            if (freqLogElement.querySelector('.placeholder-text')) {
-                freqLogElement.innerHTML = '';
+            // Fallback logic: If magnetic is unknown, guess based on frequency alone
+            else if (magneticIsUnknown) {
+                if (isWibboRange) species = 'Wibbo?';
+                else if (isGribbitRange) species = 'Gribbit?';
+                else if (isSnorkleRange) species = 'Snorkle?';
+                else if (isZappleRange) species = 'Zapple?';
             }
 
-            freqLogElement.innerHTML = ''; 
-            clientFrequencyLog.forEach(entry => {
-                const listItem = document.createElement('li');
-                
-                const timeSpan = document.createElement('span');
-                timeSpan.className = 'log-timestamp';
-                timeSpan.textContent = entry.timestamp;
-                
-                const valueSpan = document.createElement('span');
-                valueSpan.className = 'log-value';
-                valueSpan.textContent = `${entry.value} Hz`;
-                
-                listItem.appendChild(timeSpan);
-                listItem.appendChild(valueSpan);
-                freqLogElement.appendChild(listItem);
-            });
+
+            // Update the display element
+            speciesNameElement.textContent = species;
+            if (species !== 'Unknown') {
+                speciesNameElement.classList.remove('no-data');
+                speciesNameElement.style.color = '#9b59b6'; // Purple for species
+            } else {
+                speciesNameElement.classList.add('no-data');
+                speciesNameElement.style.color = '';
+            }
+        }
+
+        function addToLog(logElement, packetType, value, unit = '') {
+            if (!logElement) return;
+            if (logElement.querySelector('.placeholder-text')) {
+                logElement.innerHTML = '';
+            }
+            const listItem = document.createElement('li');
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'log-timestamp';
+            const now = new Date();
+            timeSpan.textContent = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'log-value';
+            let displayValue = packetType ? `${packetType}: ${value}` : value;
+            if (unit) { displayValue += ` ${unit}`; }
+            valueSpan.textContent = displayValue;
+            listItem.appendChild(timeSpan);
+            listItem.appendChild(valueSpan);
+            if (logElement.firstChild) {
+                logElement.insertBefore(listItem, logElement.firstChild);
+            } else {
+                logElement.appendChild(listItem);
+            }
+            while (logElement.children.length > MAX_LOG_ENTRIES) {
+                logElement.removeChild(logElement.lastChild);
+            }
         }
 
         const eventSource = new EventSource('/stream_sensor_data');
@@ -101,74 +175,87 @@
         eventSource.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);
+                let speciesNeedsUpdate = false;
 
                 if (data.type === 'frequency') {
-                    if (data.value !== null && data.value !== undefined) {
-                        const newFreq = parseFloat(data.value).toFixed(2);
-                        currentFreqElement.textContent = newFreq;
+                    if (data.value !== null) {
+                        currentFreqElement.textContent = data.value;
                         currentFreqElement.classList.remove('no-data');
-                        latestKnownFrequency = newFreq; 
+                        latestKnownFrequency = data.value;
                     } else {
                         currentFreqElement.textContent = '--';
                         currentFreqElement.classList.add('no-data');
                         latestKnownFrequency = null;
                     }
-                } 
-                // +++ Handle UART Data +++
+                    speciesNeedsUpdate = true;
+                }
                 else if (data.type === 'uart_data') {
-                    if (data.value !== null && data.value !== undefined) {
-                        let displayText = data.value;
-                        if (data.packet_type === 'FAIL') {
-                            // Optionally distinguish failed packets, e.g., by prefixing or styling
-                            // For now, just display the value. You could add:
-                            // displayText = "Partial: " + data.value;
-                            // currentUltrasoundElement.classList.add('fail-data'); // (Define .fail-data in CSS)
-                            // currentUltrasoundElement.classList.remove('success-data');
-                            currentUltrasoundElement.style.color = '#e74c3c'; // Example: Make text red for fail
-                        } else if (data.packet_type === 'PKT') {
-                            // currentUltrasoundElement.classList.add('success-data'); // (Define .success-data in CSS)
-                            // currentUltrasoundElement.classList.remove('fail-data');
-                             currentUltrasoundElement.style.color = '#27ae60'; // Example: Make text green for success (like frequency)
-                        } else {
-                            currentUltrasoundElement.style.color = ''; // Reset color if type is unknown
-                        }
-                        currentUltrasoundElement.textContent = displayText;
+                    clearTimeout(uartTimeout);
+                    if (data.value !== null) {
+                        currentUltrasoundElement.textContent = data.value;
                         currentUltrasoundElement.classList.remove('no-data');
+                        currentUltrasoundElement.style.color = data.packet_type === 'FAIL' ? '#e74c3c' : '#27ae60';
+                        addToLog(ultrasoundLogElement, data.packet_type, data.value);
 
-                        // Optional: Add to ultrasound log
-                        if (ultrasoundLogElement.querySelector('.placeholder-text')) {
-                            ultrasoundLogElement.innerHTML = ''; // Clear "Waiting for UART data..."
-                        }
-                        const listItem = document.createElement('li');
-                        const timeSpan = document.createElement('span');
-                        timeSpan.className = 'log-timestamp';
-                        const now = new Date();
-                        timeSpan.textContent = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-                        
-                        const valueSpan = document.createElement('span');
-                        valueSpan.className = 'log-value'; // You might want different styling
-                        valueSpan.textContent = `${data.packet_type}: ${data.value}`;
-                        
-                        listItem.appendChild(timeSpan);
-                        listItem.appendChild(valueSpan);
-                        // Add to the top of the log
-                        if (ultrasoundLogElement.firstChild) {
-                            ultrasoundLogElement.insertBefore(listItem, ultrasoundLogElement.firstChild);
-                        } else {
-                            ultrasoundLogElement.appendChild(listItem);
-                        }
-                        // Optional: Limit log entries
-                        while (ultrasoundLogElement.children.length > MAX_LOG_ENTRIES) {
-                           ultrasoundLogElement.removeChild(ultrasoundLogElement.lastChild);
+                        if (data.packet_type === 'PKT' && data.value && data.value.startsWith('#') && data.value.length === 4) {
+                           duckNameElement.textContent = data.value.substring(1);
+                           duckNameElement.classList.remove('no-data');
+                           duckNameElement.style.color = '#e67e22';
                         }
 
                     } else {
                         currentUltrasoundElement.textContent = '--';
                         currentUltrasoundElement.classList.add('no-data');
-                        currentUltrasoundElement.style.color = ''; // Reset color
                     }
+                    uartTimeout = setTimeout(() => {
+                        currentUltrasoundElement.textContent = 'None';
+                        currentUltrasoundElement.classList.add('no-data');
+                        addToLog(ultrasoundLogElement, 'SYSTEM', 'None (Timeout)');
+                    }, 200 * TIMEOUT_INTERVALS);
                 }
-                // +++ End of UART Data Handling +++
+                else if (data.type === 'ir_pulse') {
+                    clearTimeout(irTimeout);
+                    irZeroLogged = false;
+                    let irValue = parseFloat(data.value);
+                    if (irValue > 600.0) {
+                        currentIrPulseElement.textContent = '0.00';
+                        latestIrPulse = 0.0;
+                    } else if (data.value !== null) {
+                        currentIrPulseElement.textContent = irValue.toFixed(2);
+                        latestIrPulse = irValue;
+                        currentIrPulseElement.classList.remove('no-data');
+                        addToLog(irPulseLogElement, null, irValue.toFixed(2), 'Hz');
+                    } else {
+                        currentIrPulseElement.textContent = '--';
+                        latestIrPulse = 0.0;
+                    }
+                    speciesNeedsUpdate = true;
+                    irTimeout = setTimeout(() => {
+                        currentIrPulseElement.textContent = '0.00';
+                        latestIrPulse = 0.0;
+                        if (!irZeroLogged) {
+                            addToLog(irPulseLogElement, null, '0.00', 'Hz');
+                            irZeroLogged = true;
+                        }
+                        deduceSpecies();
+                    }, 200 * TIMEOUT_INTERVALS);
+                }
+                else if (data.type === 'magnet_direction') {
+                     if (data.value !== null) {
+                        currentMagnetElement.textContent = data.value;
+                        latestMagnetDirection = data.value;
+                        currentMagnetElement.classList.remove('no-data');
+                        addToLog(magnetLogElement, null, data.value);
+                    } else {
+                        currentMagnetElement.textContent = '--';
+                        latestMagnetDirection = 'Unknown';
+                    }
+                    speciesNeedsUpdate = true;
+                }
+
+                if (speciesNeedsUpdate) {
+                    deduceSpecies();
+                }
 
             } catch (e) {
                 console.error("Error parsing SSE data:", e, "Raw data:", event.data);
@@ -177,40 +264,38 @@
 
         eventSource.onerror = function(err) {
             console.error("EventSource connection failed:", err);
-            currentFreqElement.textContent = "Error";
-            currentFreqElement.classList.add('no-data');
-            latestKnownFrequency = null;
-            if (freqLogElement.querySelector('.placeholder-text')) {
-                 freqLogElement.querySelector('.placeholder-text').textContent = "Connection error. Retrying...";
-            }
-            // Also update Ultrasound display on error
-            currentUltrasoundElement.textContent = "Error";
-            currentUltrasoundElement.classList.add('no-data');
-            currentUltrasoundElement.style.color = ''; 
-             if (ultrasoundLogElement.querySelector('.placeholder-text')) {
-                 ultrasoundLogElement.querySelector('.placeholder-text').textContent = "Connection error.";
-            }
+            [currentFreqElement, currentUltrasoundElement, currentIrPulseElement, currentMagnetElement, duckNameElement, speciesNameElement].forEach(el => {
+                el.textContent = "Error";
+                el.classList.add('no-data');
+                el.style.color = '';
+            });
+            [freqLogElement, ultrasoundLogElement, irPulseLogElement, magnetLogElement].forEach(logEl => {
+                if (logEl && logEl.querySelector('.placeholder-text')) {
+                    logEl.querySelector('.placeholder-text').textContent = "Connection error...";
+                }
+            });
         };
 
         setInterval(() => {
             if (latestKnownFrequency !== null) {
+                if (latestKnownFrequency === '0.00' && clientFrequencyLog.length > 0 && clientFrequencyLog[0].value === '0.00') {
+                    return;
+                }
                 const now = new Date();
                 const timestamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-                
                 clientFrequencyLog.unshift({ timestamp: timestamp, value: latestKnownFrequency });
-                
-                if (clientFrequencyLog.length > MAX_LOG_ENTRIES) {
-                    clientFrequencyLog.pop(); 
-                }
-                updateFrequencyLogDisplay();
+                if (clientFrequencyLog.length > MAX_LOG_ENTRIES) { clientFrequencyLog.pop(); }
+                if (freqLogElement.querySelector('.placeholder-text')) { freqLogElement.innerHTML = ''; }
+                freqLogElement.innerHTML = '';
+                clientFrequencyLog.forEach(entry => {
+                    const listItem = document.createElement('li');
+                    listItem.innerHTML = `<span class="log-timestamp">${entry.timestamp}</span><span class="log-value">${entry.value} Hz</span>`;
+                    freqLogElement.appendChild(listItem);
+                });
             }
-        }, 500); // Frequency log updates every 500ms if new data has arrived
+        }, 1000);
 
-        updateFrequencyLogDisplay();
-        // Initial state for ultrasound log placeholder if needed
-        if (ultrasoundLogElement.children.length === 0) {
-             ultrasoundLogElement.innerHTML = '<li class="placeholder-text">Waiting for UART data...</li>';
-        }
+        deduceSpecies();
     </script>
 </body>
 </html>
