@@ -21,17 +21,17 @@ This project provides a comprehensive system for controlling a robot and monitor
 ---
 
 ## Project Structure
-
-EEE_Y1_Design_Project/  
-├── server/  
+<pre>
+EEE_Y1_Design_Project
+├── server
 │   ├── app.py                      # The Flask web server backend for the dashboard.  
 │   ├── local_robot_controller.py   # The command-line script for direct robot control.  
-│   ├── static/  
+│   ├── static
 │   │   └── sensor_dashboard.css    # CSS styling for the web dashboard.  
-│   └── templates/  
+│   └── templates
 │       └── sensor_dashboard.html   # HTML structure for the web dashboard.  
 └── README.md                       # This file.  
-  
+</pre>
  
 ---
 
