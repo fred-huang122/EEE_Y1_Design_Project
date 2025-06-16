@@ -62,6 +62,8 @@ const int analogMax = 1023;
 
 // --- IR Pulse Detection (Polling Method) ---
 const int IR_PULSE_PIN = A1;
+unsigned long lastIRReadTime = 0;
+const unsigned long IR_READ_INTERVAL = 200; 
 volatile unsigned long ir_lastMicros = 0;
 volatile unsigned long ir_period_us  = 0;
 volatile bool          ir_freshFlag  = false;
@@ -190,28 +192,28 @@ void irPulseISR() {
 void handleIrPulse() {
   if (!ir_freshFlag) { return; }
 
-  unsigned long period_us_copy;
+  if (millis() - lastIRReadTime >= IR_READ_INTERVAL) {
+    lastIRReadTime = millis(); // Update the timer
+    unsigned long period_us_copy;
 
-  // Disable interrupts briefly to safely copy the volatile variable.
-  // This prevents the ISR from changing ir_period_us while we're reading it.
-  noInterrupts();
-  period_us_copy = ir_period_us;
-  ir_freshFlag = false; // Reset the flag so we don't process the same data twice
-  interrupts();
+    // Disable interrupts briefly to safely copy the volatile variable.
+    // This prevents the ISR from changing ir_period_us while we're reading it.
+    noInterrupts();
+    period_us_copy = ir_period_us;
+    ir_freshFlag = false; // Reset the flag so we don't process the same data twice
+    interrupts();
 
-  // Slower calculations and network communication
-  if (period_us_copy > 0) {
-    float frequency = 1000000.0f / period_us_copy;
+    // Slower calculations and network communication
+    if (period_us_copy > 0) {
+      float frequency = 1000000.0f / period_us_copy;
 
-    Serial.print("IR Freq: ");
-    Serial.println(frequency);
-
-    // Send the raw frequency value over UDP
-    if (controllerAddressKnown) {
-      sprintf(irSendBuffer, "IR:%.2f", frequency);
-      Udp.beginPacket(controllerIP, PYTHON_LISTEN_PORT);
-      Udp.write((uint8_t*)irSendBuffer, strlen(irSendBuffer));
-      Udp.endPacket();
+      // Send the raw frequency value over UDP
+      if (controllerAddressKnown) {
+        sprintf(irSendBuffer, "IR:%.2f", frequency);
+        Udp.beginPacket(controllerIP, PYTHON_LISTEN_PORT);
+        Udp.write((uint8_t*)irSendBuffer, strlen(irSendBuffer));
+        Udp.endPacket();
+      }
     }
   }
 }
@@ -225,9 +227,9 @@ void handleMagneticSensor() {
     float voltage = (float)sensorValue * (Vref / (float)analogMax);
     char polarityStr[10];
 
-    if (voltage > 2.3) {
+    if (voltage > 2) {
       strcpy(polarityStr, "South");
-    } else if (voltage < 1) {
+    } else if (voltage < 1.2) {
       strcpy(polarityStr, "North");
     } else {
       strcpy(polarityStr, "Unknown");
@@ -252,8 +254,6 @@ void handleUart() {
       uartDataPacketBuffer[uartDataCharCount++] = (char)incomingUARTByte;
 
       if (uartDataCharCount == 4) {
-        Serial.print("UART: ");
-        Serial.println(uartDataPacketBuffer);
         uartDataPacketBuffer[4] = '\0';
         if (controllerAddressKnown) {
           sprintf(UARTSendBuffer, "UART_PKT:%s", uartDataPacketBuffer);
@@ -302,7 +302,7 @@ void handleAMFrequency() {
       hertz = ((float)count / 2.0f) / ((float)true_interval / 1000.0f);
     }
 
-    if (controllerAddressKnown && hertz > 0) {
+    if (controllerAddressKnown) {
       sprintf(freqSendBuffer, "FREQ:%.2f", hertz);
       Udp.beginPacket(controllerIP, PYTHON_LISTEN_PORT);
       Udp.write((uint8_t*)freqSendBuffer, strlen(freqSendBuffer));
@@ -374,9 +374,9 @@ void processCommand(const char* command) {
 }
 
 int get_speed(bool fast = false, bool slow = false) {
-  if (fast) return 255;
-  if (slow) return 80;
-  return 220;
+  if (fast) return 200;
+  if (slow) return 60;
+  return 100;
 }
 
 void moveForward(bool fast, bool slow) {
