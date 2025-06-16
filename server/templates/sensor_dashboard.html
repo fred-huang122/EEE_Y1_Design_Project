@@ -211,7 +211,7 @@
                         currentUltrasoundElement.textContent = 'None';
                         currentUltrasoundElement.classList.add('no-data');
                         addToLog(ultrasoundLogElement, 'SYSTEM', 'None (Timeout)');
-                    }, 200 * TIMEOUT_INTERVALS);
+                    }, 200 * TIMEOUT_INTERVALS * 2);
                 }
                 else if (data.type === 'ir_pulse') {
                     clearTimeout(irTimeout);
